@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WaveForge 3D — Audio Visualizer</title>
+<link rel="canonical" href="https://waveforge-3d.surge.sh/">
+<meta name="description" content="Real-time 3D audio visualizer with WebGL. Microphone or file input, 6 visualization modes, beat detection, color themes.">
+<meta name="keywords" content="audio visualizer, 3D, WebGL, microphone, spectrum, waveform, music">
+<meta property="og:title" content="WaveForge 3D — Audio Visualizer">
+<meta property="og:description" content="Stunning 3D audio visualization in your browser.">
+<meta property="og:url" content="https://waveforge-3d.surge.sh/">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎧</text></svg>">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#000;--panel:rgba(12,12,20,0.92);--border:rgba(255,255,255,0.08);--text:#e8e8f0;--dim:#6a6a88;--accent:#6c5ce7;--accent2:#a29bfe;--green:#00cec9;--red:#ff6b6b}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden;height:100vh}
+canvas{display:block;position:fixed;top:0;left:0;width:100%;height:100%}
+#controls{position:fixed;bottom:0;left:0;right:0;background:var(--panel);backdrop-filter:blur(20px);border-top:1px solid var(--border);padding:14px 20px;z-index:10;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.source-btn{padding:8px 18px;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:20px;font-size:13px;cursor:pointer;transition:all .2s;white-space:nowrap}
+.source-btn:hover,.source-btn.active{background:var(--accent);color:#fff}
+.source-btn.recording{background:var(--red);border-color:var(--red);color:#fff;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+#file-input{display:none}
+.sep{width:1px;height:28px;background:var(--border)}
+.modes{display:flex;gap:6px}
+.mode-btn{padding:6px 14px;background:rgba(255,255,255,0.04);border:1px solid transparent;color:var(--dim);border-radius:14px;font-size:12px;cursor:pointer;transition:all .2s;white-space:nowrap}
+.mode-btn:hover{color:var(--text);background:rgba(255,255,255,0.08)}
+.mode-btn.active{color:var(--accent2);border-color:var(--accent);background:rgba(108,92,231,0.1)}
+.themes{display:flex;gap:4px}
+.theme-dot{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .15s}
+.theme-dot:hover{transform:scale(1.15)}
+.theme-dot.active{border-color:#fff}
+.ctrl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
+.ctrl input[type="range"]{width:80px;accent-color:var(--accent);height:3px}
+#track-name{font-size:12px;color:var(--dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#audio-progress{flex:1;min-width:80px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;cursor:pointer;position:relative}
+#audio-progress-bar{height:100%;background:var(--accent);border-radius:2px;width:0;transition:width .1s}
+#play-btn{width:32px;height:32px;border-radius:50%;background:var(--accent);border:none;color:#fff;cursor:pointer;font-size:14px;display:none;align-items:center;justify-content:center}
+#hint{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;z-index:5;pointer-events:none;transition:opacity .5s}
+#hint h2{font-size:28px;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+#hint p{font-size:14px;color:var(--dim)}
+#hint.hidden{opacity:0}
+#stats{position:fixed;top:12px;left:12px;font-size:11px;color:var(--dim);z-index:5}
+@media(max-width:768px){
+#controls{padding:10px 12px;gap:8px}
+.modes{flex-wrap:wrap}
+.ctrl input[type="range"]{width:60px}
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"><h2>WaveForge 3D</h2><p>Click Microphone or drop an audio file to start</p></div>
+<div id="stats"></div>
+<div id="controls">
+  <button class="source-btn" id="mic-btn">🎤 Microphone</button>
+  <button class="source-btn" id="file-btn">📂 Open File</button>
+  <input type="file" id="file-input" accept="audio/*">
+  <button id="play-btn">▶</button>
+  <div id="audio-progress"><div id="audio-progress-bar"></div></div>
+  <span id="track-name"></span>
+  <div class="sep"></div>
+  <div class="modes">
+    <button class="mode-btn active" data-mode="0">Bars</button>
+    <button class="mode-btn" data-mode="1">Sphere</button>
+    <button class="mode-btn" data-mode="2">Ring</button>
+    <button class="mode-btn" data-mode="3">Wave</button>
+    <button class="mode-btn" data-mode="4">Particles</button>
+    <button class="mode-btn" data-mode="5">Terrain</button>
+  </div>
+  <div class="sep"></div>
+  <div class="themes">
+    <div class="theme-dot active" data-theme="0" style="background:linear-gradient(135deg,#6c5ce7,#00cec9)"></div>
+    <div class="theme-dot" data-theme="1" style="background:linear-gradient(135deg,#ff6b6b,#ffd93d)"></div>
+    <div class="theme-dot" data-theme="2" style="background:linear-gradient(135deg,#00ff88,#00b4d8)"></div>
+    <div class="theme-dot" data-theme="3" style="background:linear-gradient(135deg,#f72585,#b5179e)"></div>
+    <div class="theme-dot" data-theme="4" style="background:linear-gradient(135deg,#fff,#aaa)"></div>
+  </div>
+  <div class="sep"></div>
+  <div class="ctrl"><span>Gain</span><input type="range" id="gain" min="0.5" max="5" step="0.1" value="1.5"></div>
+  <div class="ctrl"><span>Smooth</span><input type="range" id="smooth" min="0.5" max="0.98" step="0.01" value="0.82"></div>
+</div>
+
+<script>
+/* ===================== WebGL Setup ===================== */
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+if(!gl){document.body.innerHTML='<h2 style="color:#fff;padding:40px">WebGL not supported</h2>';throw'no webgl';}
+
+const isGL2 = gl instanceof WebGL2RenderingContext;
+function resize(){
+  const d = Math.min(devicePixelRatio, 2);
+  canvas.width = innerWidth*d; canvas.height = innerHeight*d;
+  gl.viewport(0,0,canvas.width,canvas.height);
+}
+addEventListener('resize',resize); resize();
+
+/* ===================== Shaders ===================== */
+const VS = `
+attribute vec3 aPos;
+attribute vec4 aCol;
+uniform mat4 uVP;
+uniform float uSize;
+varying vec4 vCol;
+void main(){
+  gl_Position = uVP * vec4(aPos, 1.0);
+  gl_PointSize = uSize * (600.0 / gl_Position.w);
+  vCol = aCol;
+}`;
+
+const FS = `
+precision highp float;
+varying vec4 vCol;
+void main(){
+  vec2 p = gl_PointCoord * 2.0 - 1.0;
+  float r = dot(p,p);
+  if(r > 1.0) discard;
+  float a = vCol.a * (1.0 - sqrt(r));
+  gl_FragColor = vec4(vCol.rgb, a);
+}`;
+
+const LINE_VS = `
+attribute vec3 aPos;
+attribute vec4 aCol;
+uniform mat4 uVP;
+varying vec4 vCol;
+void main(){
+  gl_Position = uVP * vec4(aPos, 1.0);
+  vCol = aCol;
+}`;
+
+const LINE_FS = `
+precision highp float;
+varying vec4 vCol;
+void main(){gl_FragColor = vCol;}`;
+
+function compile(src,type){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){console.error(gl.getShaderInfoLog(s));return null;}return s;}
+function link(vs,fs){const p=gl.createProgram();gl.attachShader(p,compile(vs,gl.VERTEX_SHADER));gl.attachShader(p,compile(fs,gl.FRAGMENT_SHADER));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){console.error(gl.getProgramInfoLog(p));return null;}return p;}
+
+const pointProg = link(VS, FS);
+const lineProg = link(LINE_VS, LINE_FS);
+const uPointVP = gl.getUniformLocation(pointProg,'uVP');
+const uPointSize = gl.getUniformLocation(pointProg,'uSize');
+const uLineVP = gl.getUniformLocation(lineProg,'uVP');
+
+/* ===================== Audio ===================== */
+let audioCtx, analyser, source, dataArray, freqArray, micStream;
+let isPlaying = false, isMic = false, audioEl;
+const FFT = 2048;
+
+async function initAudio(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = FFT;
+  analyser.smoothingTimeConstant = 0.82;
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+  freqArray = new Uint8Array(analyser.frequencyBinCount);
+}
+
+async function startMic(){
+  await initAudio();
+  if(micStream) stopAll();
+  try{
+    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    source = audioCtx.createMediaStreamSource(micStream);
+    const gain = audioCtx.createGain();
+    gain.gain.value = parseFloat(document.getElementById('gain').value);
+    source.connect(gain);
+    gain.connect(analyser);
+    isMic = true; isPlaying = true;
+    document.getElementById('mic-btn').classList.add('recording');
+    document.getElementById('hint').classList.add('hidden');
+  }catch(e){console.error(e);alert('Microphone access denied');}
+}
+
+function stopAll(){
+  if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}
+  if(source){try{source.disconnect();}catch(e){}}
+  if(audioEl){audioEl.pause();audioEl.currentTime=0;}
+  source=null;isMic=false;isPlaying=false;
+  document.getElementById('mic-btn').classList.remove('recording');
+  document.getElementById('play-btn').style.display='none';
+}
+
+async function loadFile(file){
+  await initAudio();
+  stopAll();
+  if(!audioEl){
+    audioEl = new Audio();
+    audioEl.crossOrigin='anonymous';
+  }
+  audioEl.src = URL.createObjectURL(file);
+  source = audioCtx.createMediaElementSource(audioEl);
+  const gain = audioCtx.createGain();
+  gain.gain.value = parseFloat(document.getElementById('gain').value);
+  source.connect(gain);
+  gain.connect(analyser);
+  gain.connect(audioCtx.destination);
+  audioEl.play();
+  isPlaying=true;
+  document.getElementById('track-name').textContent=file.name;
+  document.getElementById('play-btn').style.display='flex';
+  document.getElementById('hint').classList.add('hidden');
+  audioEl.onended=()=>{isPlaying=false;document.getElementById('play-btn').textContent='▶';};
+}
+
+document.getElementById('mic-btn').addEventListener('click',()=>{
+  if(isMic){stopAll();return;}
+  startMic();
+});
+document.getElementById('file-btn').addEventListener('click',()=>document.getElementById('file-input').click());
+document.getElementById('file-input').addEventListener('change',e=>{
+  if(e.target.files[0]) loadFile(e.target.files[0]);
+});
+document.getElementById('play-btn').addEventListener('click',()=>{
+  if(!audioEl)return;
+  if(audioEl.paused){audioEl.play();isPlaying=true;document.getElementById('play-btn').textContent='⏸';}
+  else{audioEl.pause();isPlaying=false;document.getElementById('play-btn').textContent='▶';}
+});
+document.getElementById('audio-progress').addEventListener('click',e=>{
+  if(!audioEl||!audioEl.duration)return;
+  const rect=e.target.getBoundingClientRect();
+  audioEl.currentTime=((e.clientX-rect.left)/rect.width)*audioEl.duration;
+});
+
+// Drag & drop
+document.body.addEventListener('dragover',e=>{e.preventDefault();e.stopPropagation();});
+document.body.addEventListener('drop',e=>{
+  e.preventDefault();e.stopPropagation();
+  const f=e.dataTransfer.files[0];
+  if(f&&f.type.startsWith('audio/')) loadFile(f);
+});
+
+document.getElementById('smooth').addEventListener('input',e=>{
+  if(analyser) analyser.smoothingTimeConstant=parseFloat(e.target.value);
+});
+
+/* ===================== Themes ===================== */
+const THEMES = [
+  // [low, mid, high] as RGB arrays
+  [[0.42,0.36,0.91],[0,0.81,0.79],[0.99,0.47,0.66]],
+  [[1,0.42,0.42],[1,0.85,0.24],[1,0.6,0.2]],
+  [[0,1,0.53],[0,0.71,0.85],[0.2,0.4,1]],
+  [[0.97,0.15,0.52],[0.71,0.09,0.62],[0.36,0.22,0.87]],
+  [[1,1,1],[0.7,0.7,0.7],[0.4,0.4,0.4]],
+];
+let currentTheme = 0;
+
+function getColor(t, intensity){
+  const th = THEMES[currentTheme];
+  let r,g,b;
+  if(t<0.5){const s=t*2;r=th[0][0]+(th[1][0]-th[0][0])*s;g=th[0][1]+(th[1][1]-th[0][1])*s;b=th[0][2]+(th[1][2]-th[0][2])*s;}
+  else{const s=(t-0.5)*2;r=th[1][0]+(th[2][0]-th[1][0])*s;g=th[1][1]+(th[2][1]-th[1][1])*s;b=th[1][2]+(th[2][2]-th[1][2])*s;}
+  const bright = 0.3+intensity*0.7;
+  return [r*bright, g*bright, b*bright, 0.3+intensity*0.6];
+}
+
+document.querySelectorAll('.theme-dot').forEach(d=>{
+  d.addEventListener('click',()=>{
+    document.querySelectorAll('.theme-dot').forEach(x=>x.classList.remove('active'));
+    d.classList.add('active');
+    currentTheme=parseInt(d.dataset.theme);
+  });
+});
+
+/* ===================== Visualization ===================== */
+let vizMode = 0;
+document.querySelectorAll('.mode-btn').forEach(b=>{
+  b.addEventListener('click',()=>{
+    document.querySelectorAll('.mode-btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    vizMode=parseInt(b.dataset.mode);
+  });
+});
+
+/* ===================== Camera ===================== */
+let camTheta=0, camPhi=0.4, camDist=18, camTarget=[0,0,0];
+let dragging=false, rightDrag=false, lastMx=0, lastMy=0;
+
+canvas.addEventListener('mousedown',e=>{if(e.button===2)rightDrag=true;else dragging=true;lastMx=e.clientX;lastMy=e.clientY;e.preventDefault();});
+addEventListener('mousemove',e=>{
+  if(!dragging&&!rightDrag)return;
+  const dx=e.clientX-lastMx,dy=e.clientY-lastMy;
+  if(dragging){camTheta-=dx*0.005;camPhi=Math.max(-1.3,Math.min(1.3,camPhi+dy*0.005));}
+  if(rightDrag){camTarget[0]-=dx*0.02;camTarget[1]+=dy*0.02;}
+  lastMx=e.clientX;lastMy=e.clientY;
+});
+addEventListener('mouseup',()=>{dragging=false;rightDrag=false;});
+canvas.addEventListener('wheel',e=>{camDist=Math.max(3,Math.min(50,camDist+e.deltaY*0.02));e.preventDefault();},{passive:false});
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+
+let touches=[];
+canvas.addEventListener('touchstart',e=>{touches=Array.from(e.touches);e.preventDefault();},{passive:false});
+canvas.addEventListener('touchmove',e=>{
+  const t=Array.from(e.touches);
+  if(touches.length===1&&t.length===1){camTheta-=(t[0].clientX-touches[0].clientX)*0.005;camPhi=Math.max(-1.3,Math.min(1.3,camPhi+(t[0].clientY-touches[0].clientY)*0.005));}
+  if(touches.length===2&&t.length===2){const d0=Math.hypot(touches[0].clientX-touches[1].clientX,touches[0].clientY-touches[1].clientY);const d1=Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);camDist=Math.max(3,Math.min(50,camDist*(d0/d1)));}
+  touches=t;e.preventDefault();
+},{passive:false});
+
+function mat4Perspective(fov,asp,n,f){const t=1/Math.tan(fov/2),nf=1/(n-f);return new Float32Array([t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)*nf,-1, 0,0,2*f*n*nf,0]);}
+function mat4LookAt(e,c,u){
+  let zx=e[0]-c[0],zy=e[1]-c[1],zz=e[2]-c[2],l=1/Math.max(1e-8,Math.sqrt(zx*zx+zy*zy+zz*zz));
+  zx*=l;zy*=l;zz*=l;
+  let xx=u[1]*zz-u[2]*zy,xy=u[2]*zx-u[0]*zz,xz=u[0]*zy-u[1]*zx;
+  l=1/Math.max(1e-8,Math.sqrt(xx*xx+xy*xy+xz*xz));xx*=l;xy*=l;xz*=l;
+  let yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;
+  return new Float32Array([xx,yx,zx,0,xy,yy,zy,0,xz,yz,zz,0,-(xx*e[0]+xy*e[1]+xz*e[2]),-(yx*e[0]+yy*e[1]+yz*e[2]),-(zx*e[0]+zy*e[1]+zz*e[2]),1]);
+}
+function mat4Mul(a,b){const o=new Float32Array(16);for(let i=0;i<4;i++)for(let j=0;j<4;j++){o[j*4+i]=0;for(let k=0;k<4;k++)o[j*4+i]+=a[k*4+i]*b[j*4+k];}return o;}
+
+function getCamPos(){
+  return [
+    camTarget[0]+camDist*Math.sin(camTheta)*Math.cos(camPhi),
+    camTarget[1]+camDist*Math.sin(camPhi),
+    camTarget[2]+camDist*Math.cos(camTheta)*Math.cos(camPhi)
+  ];
+}
+
+/* ===================== Geometry Generators ===================== */
+const MAX_PTS = 200000;
+const posBuf = new Float32Array(MAX_PTS*3);
+const colBuf = new Float32Array(MAX_PTS*4);
+let ptCount = 0;
+
+const linePosBuf = new Float32Array(MAX_PTS*3);
+const lineColBuf = new Float32Array(MAX_PTS*4);
+let lineCount = 0;
+
+function addPt(x,y,z,r,g,b,a){
+  const i=ptCount*3, j=ptCount*4;
+  if(ptCount>=MAX_PTS)return;
+  posBuf[i]=x;posBuf[i+1]=y;posBuf[i+2]=z;
+  colBuf[j]=r;colBuf[j+1]=g;colBuf[j+2]=b;colBuf[j+3]=a;
+  ptCount++;
+}
+
+function addLine(x1,y1,z1,x2,y2,z2,r,g,b,a){
+  const i=lineCount*3, j=lineCount*4;
+  if(lineCount+2>MAX_PTS)return;
+  linePosBuf[i]=x1;linePosBuf[i+1]=y1;linePosBuf[i+2]=z2;
+  lineColBuf[j]=r;lineColBuf[j+1]=g;lineColBuf[j+2]=b;lineColBuf[j+3]=a;
+  linePosBuf[i+3]=x2;linePosBuf[i+4]=y2;linePosBuf[i+5]=z2;
+  lineColBuf[j+4]=r;lineColBuf[j+5]=g;lineColBuf[j+6]=b;lineColBuf[j+7]=a;
+  lineCount+=2;
+}
+
+// Beat detection
+let beatVal = 0, lastBeat = 0;
+function detectBeat(freq){
+  let bass = 0;
+  for(let i=0;i<10;i++) bass += freq[i];
+  bass /= 10;
+  if(bass > 180 && performance.now()-lastBeat > 200){
+    beatVal = 1; lastBeat = performance.now();
+  }
+  beatVal *= 0.92;
+}
+
+/* ===================== Viz Modes ===================== */
+function genBars(freq, time){
+  const N = 128;
+  const gap = 12/N;
+  for(let i=0;i<N;i++){
+    const fi = Math.floor(i*freq.length*0.6/N);
+    const v = freq[fi]/255;
+    const h = v*8;
+    const t = i/N;
+    const c = getColor(t, v);
+    const x = (i-N/2)*gap;
+    // Column of points
+    const steps = Math.max(2, Math.ceil(h*3));
+    for(let s=0;s<steps;s++){
+      const sy = (s/steps)*h;
+      const bright = 1 - (s/steps)*0.3;
+      addPt(x, sy, 0, c[0]*bright, c[1]*bright, c[2]*bright, c[3]*(0.5+s/steps*0.5));
+    }
+    // Top glow
+    addPt(x, h, 0, c[0]*1.5, c[1]*1.5, c[2]*1.5, c[3]);
+    // Reflection
+    for(let s=0;s<steps/2;s++){
+      const sy = -(s/steps)*h*0.4;
+      addPt(x, sy, 0, c[0]*0.3, c[1]*0.3, c[2]*0.3, 0.2);
+    }
+  }
+}
+
+function genSphere(freq, time){
+  const N = 64;
+  for(let i=0;i<N;i++){
+    const fi = Math.floor(i*freq.length*0.5/N);
+    const v = freq[fi]/255;
+    const lat = (i/N)*Math.PI;
+    for(let j=0;j<N;j++){
+      const f2 = Math.floor(j*freq.length*0.3/N+freq.length*0.3);
+      const v2 = (freq[f2]||0)/255;
+      const lon = (j/N)*Math.PI*2;
+      const r = 3 + (v+v2)*1.5 + beatVal*0.5;
+      const x = r*Math.sin(lat)*Math.cos(lon+time*0.5);
+      const y = r*Math.cos(lat);
+      const z = r*Math.sin(lat)*Math.sin(lon+time*0.5);
+      const t = (i+j)/(N*2);
+      const c = getColor(t, (v+v2)/2);
+      addPt(x,y,z,c[0],c[1],c[2],c[3]*(0.3+v*0.5));
+    }
+  }
+}
+
+function genRing(freq, time){
+  const N = 180;
+  const layers = 8;
+  for(let l=0;l<layers;l++){
+    const ly = (l-layers/2)*1.5;
+    for(let i=0;i<N;i++){
+      const fi = Math.floor(i*freq.length*0.5/N);
+      const v = freq[fi]/255;
+      const angle = (i/N)*Math.PI*2;
+      const r = 5 + v*3 + beatVal*1;
+      const x = Math.cos(angle+time*0.3)*r;
+      const z = Math.sin(angle+time*0.3)*r;
+      const t = (i+l*N)/(N*layers);
+      const c = getColor(l/layers, v);
+      addPt(x, ly+l*v*0.5, z, c[0], c[1], c[2], c[3]*(0.4+v*0.5));
+    }
+  }
+}
+
+function genWave(freq, time){
+  const W=80, H=60;
+  for(let i=0;i<W;i++){
+    for(let j=0;j<H;j++){
+      const fi = Math.floor(i*freq.length*0.5/W);
+      const f2i = Math.floor(j*freq.length*0.3/H);
+      const v = freq[fi]/255;
+      const v2 = (freq[f2i]||0)/255;
+      const x = (i-W/2)*0.25;
+      const z = (j-H/2)*0.25;
+      const y = (v+v2)*2 + Math.sin(i*0.15+time*2)*v*1.5 + Math.cos(j*0.15+time*1.5)*v2*1.5;
+      const t = (i+j)/(W+H);
+      const c = getColor(t, (v+v2)/2);
+      addPt(x, y, z, c[0], c[1], c[2], c[3]*(0.3+v*0.5));
+    }
+  }
+}
+
+function genParticles(freq, time){
+  const N = 3000;
+  const seed = Math.floor(time*2);
+  for(let i=0;i<N;i++){
+    const fi = Math.floor((i%128)*freq.length*0.5/128);
+    const v = freq[fi]/255;
+    const h = (i*0.618033988)%1;
+    const angle = h*Math.PI*2 + time*(0.5+v);
+    const r = 2 + h*8 + v*3 + beatVal*2;
+    const y = (Math.sin(h*7+time)*3 + v*4) * (1+beatVal*0.5);
+    const x = Math.cos(angle)*r;
+    const z = Math.sin(angle)*r;
+    const t = h;
+    const c = getColor(t, v);
+    addPt(x,y,z,c[0],c[1],c[2],c[3]*(0.2+v*0.6));
+  }
+}
+
+function genTerrain(freq, time){
+  const W=64, H=48;
+  for(let i=0;i<W;i++){
+    for(let j=0;j<H;j++){
+      const fi = Math.floor(i*freq.length*0.5/W);
+      const v = freq[fi]/255;
+      const x = (i-W/2)*0.35;
+      const z = (j-H/2)*0.35;
+      const wave1 = Math.sin(i*0.2+time*1.5)*v*3;
+      const wave2 = Math.cos(j*0.25+time*1.2)*v*2;
+      const wave3 = Math.sin((i+j)*0.1+time)*v*1.5;
+      const y = wave1+wave2+wave3 + beatVal*2;
+      const t = i/W;
+      const c = getColor(t, Math.abs(y)/8);
+      addPt(x,y,z,c[0],c[1],c[2],c[3]*(0.3+v*0.4));
+    }
+  }
+}
+
+const generators = [genBars, genSphere, genRing, genWave, genParticles, genTerrain];
+
+/* ===================== Buffer Objects ===================== */
+const posBufObj = gl.createBuffer();
+const colBufObj = gl.createBuffer();
+const linePosBufObj = gl.createBuffer();
+const lineColBufObj = gl.createBuffer();
+
+const aPosLoc = gl.getAttribLocation(pointProg,'aPos');
+const aColLoc = gl.getAttribLocation(pointProg,'aCol');
+const laPosLoc = gl.getAttribLocation(lineProg,'aPos');
+const laColLoc = gl.getAttribLocation(lineProg,'aCol');
+
+/* ===================== Main Loop ===================== */
+let fpsFrames=0, fpsTime=0, fpsVal=0;
+const defaultFreq = new Uint8Array(512);
+for(let i=0;i<512;i++) defaultFreq[i] = Math.sin(i*0.1)*30+30;
+
+function frame(now){
+  requestAnimationFrame(frame);
+  const time = now*0.001;
+
+  fpsFrames++;
+  if(time-fpsTime>=1){fpsVal=fpsFrames;fpsFrames=0;fpsTime=time;}
+
+  // Get audio data
+  let freq;
+  if(analyser && isPlaying){
+    analyser.getByteFrequencyData(freqArray);
+    analyser.getByteTimeDomainData(dataArray);
+    freq = freqArray;
+  } else {
+    // Idle animation
+    for(let i=0;i<512;i++) defaultFreq[i] = Math.sin(i*0.05+time*2)*40+Math.sin(i*0.1+time)*20+60;
+    freq = defaultFreq;
+  }
+
+  detectBeat(freq);
+
+  // Auto rotate
+  camTheta += 0.003;
+
+  // Generate geometry
+  ptCount=0; lineCount=0;
+  generators[vizMode](freq, time);
+
+  // Render
+  gl.clearColor(0.02,0.02,0.04,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+  gl.disable(gl.DEPTH_TEST);
+
+  const asp = canvas.width/canvas.height;
+  const proj = mat4Perspective(Math.PI/3, asp, 0.1, 200);
+  const eye = getCamPos();
+  const view = mat4LookAt(eye, camTarget, [0,1,0]);
+  const vp = mat4Mul(proj, view);
+
+  // Points
+  gl.useProgram(pointProg);
+  gl.uniformMatrix4fv(uPointVP, false, vp);
+  gl.uniform1f(uPointSize, vizMode===4?4:3);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBufObj);
+  gl.bufferData(gl.ARRAY_BUFFER, posBuf.subarray(0,ptCount*3), gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(aPosLoc);
+  gl.vertexAttribPointer(aPosLoc,3,gl.FLOAT,false,0,0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, colBufObj);
+  gl.bufferData(gl.ARRAY_BUFFER, colBuf.subarray(0,ptCount*4), gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(aColLoc);
+  gl.vertexAttribPointer(aColLoc,4,gl.FLOAT,false,0,0);
+
+  gl.drawArrays(gl.POINTS, 0, ptCount);
+
+  // Lines
+  if(lineCount>0){
+    gl.useProgram(lineProg);
+    gl.uniformMatrix4fv(uLineVP, false, vp);
+    gl.bindBuffer(gl.ARRAY_BUFFER, linePosBufObj);
+    gl.bufferData(gl.ARRAY_BUFFER, linePosBuf.subarray(0,lineCount*3), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(laPosLoc);
+    gl.vertexAttribPointer(laPosLoc,3,gl.FLOAT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lineColBufObj);
+    gl.bufferData(gl.ARRAY_BUFFER, lineColBuf.subarray(0,lineCount*4), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(laColLoc);
+    gl.vertexAttribPointer(laColLoc,4,gl.FLOAT,false,0,0);
+    gl.drawArrays(gl.LINES, 0, lineCount);
+  }
+
+  // Stats
+  document.getElementById('stats').textContent = `${ptCount.toLocaleString()} pts | ${fpsVal} FPS | Mode: ${['Bars','Sphere','Ring','Wave','Particles','Terrain'][vizMode]}`;
+
+  // Audio progress
+  if(audioEl && audioEl.duration){
+    const bar = document.getElementById('audio-progress-bar');
+    bar.style.width = (audioEl.currentTime/audioEl.duration*100)+'%';
+  }
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
